@@ -10,9 +10,15 @@ extern crate elf;
 extern crate env_logger;
 #[macro_use]
 extern crate failure;
+#[cfg(target_os = "macos")]
+extern crate goblin;
 #[macro_use]
 extern crate failure_derive;
 extern crate libc;
+#[cfg(target_os = "macos")]
+extern crate libproc;
+#[cfg(target_os = "macos")]
+extern crate mach;
 #[macro_use]
 extern crate log;
 extern crate rand;
@@ -21,6 +27,8 @@ extern crate rbspy_testdata;
 extern crate read_process_memory;
 #[cfg(target_os = "macos")]
 extern crate regex;
+#[cfg(target_os = "macos")]
+extern crate lazy_static;
 extern crate ruby_bindings as bindings;
 #[cfg(test)]
 extern crate tempdir;
@@ -38,6 +46,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub mod proc_maps;
+#[cfg(target_os = "macos")]
+pub mod mac_maps;
 pub mod address_finder;
 pub mod initialize;
 pub mod copy;
