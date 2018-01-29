@@ -31,7 +31,7 @@ pub fn initialize(pid: pid_t) -> Result<StackTraceGetter, Error> {
 
     debug!("version: {}", version);
     Ok(StackTraceGetter {
-        pid: pid,
+        process_handle: pid.try_into_process_handle().unwrap(),
         current_thread_addr_location: address_finder::current_thread_address(
             pid,
             &version,
@@ -75,7 +75,7 @@ impl PartialOrd for StackFrame {
 
 // Use a StackTraceGetter to get stack traces
 pub struct StackTraceGetter {
-    pid: pid_t,
+    process_handle: ProcessHandle,
     current_thread_addr_location: usize,
     stack_trace_function:
         Box<Fn(usize, &ProcessHandle) -> Result<Vec<StackFrame>, MemoryCopyError>>,
@@ -92,7 +92,7 @@ impl StackTraceGetter {
         let stack_trace_function = &self.stack_trace_function;
         stack_trace_function(
             self.current_thread_addr_location,
-            &self.pid.try_into_process_handle().unwrap(),
+            &self.process_handle,
         )
     }
 }
