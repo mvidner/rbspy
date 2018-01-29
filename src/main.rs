@@ -19,6 +19,7 @@ extern crate libc;
 extern crate libproc;
 #[cfg(target_os = "macos")]
 extern crate mach;
+extern crate nix;
 #[macro_use]
 extern crate log;
 extern crate rand;
@@ -32,6 +33,8 @@ extern crate lazy_static;
 extern crate ruby_bindings as bindings;
 #[cfg(test)]
 extern crate tempdir;
+#[macro_use]
+extern crate text_io;
 
 use chrono::prelude::*;
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
@@ -130,7 +133,35 @@ fn do_main() -> Result<(), Error> {
     }
 }
 
+fn sudo_if_not_root() -> bool {
+    use std::os::unix::prelude::*;
+    // execs sudo -E $COMMAND if the command isn't running as root
+    let args: Vec<String> = std::env::args().collect();
+    let euid = nix::unistd::Uid::effective();
+    if euid.is_root() {
+        return true;
+    } else {
+        println!("Command must run as root. Rerun with sudo? (y/N)");
+        let line: String = read!("{}\n");
+        if line != "y" {
+            return false;
+        }
+        Command::new("sudo")
+            .arg("-E")
+            .args(args)
+            .exec();
+        println!("Failed to exec")
+        return false; // we'll never reach this line
+    }
+}
+
 fn main() {
+    if cfg!(target_os = "macos") {
+        let ok = sudo_if_not_root();
+        if !ok {
+            return;
+        }
+    }
     match do_main() {
         Err(x) => {
             eprintln!("Error. Causes: ");
