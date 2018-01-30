@@ -32,8 +32,8 @@ mod os_impl {
     use mac_maps::{get_process_maps, task_for_pid, MacMapRange};
 
     pub fn get_ruby_version_address(pid: pid_t) -> Result<usize, Error> {
-        let binary = &get_ruby_binary(pid)?;
-        binary.symbol_addr("_ruby_version")
+        let proginfo = &get_program_info(pid)?;
+        proginfo.symbol_addr("_ruby_version")
     }
 
     pub fn current_thread_address(
@@ -41,17 +41,30 @@ mod os_impl {
         version: &str,
         _is_maybe_thread: Box<Fn(usize, &ProcessHandle, &Vec<MapRange>) -> bool>,
     ) -> Result<usize, Error> {
-        let binary = &get_ruby_binary(pid)?;
+        let proginfo = &get_program_info(pid)?;
         if version >= "2.5.0" {
-            binary.symbol_addr("_ruby_current_execution_context_ptr")
+            proginfo.symbol_addr("_ruby_current_execution_context_ptr")
         } else {
-            binary.symbol_addr("_ruby_current_thread")
+            proginfo.symbol_addr("_ruby_current_thread")
         }
     }
 
     struct Binary {
         pub start_addr: usize,
         pub mach: Vec<u8>,
+    }
+
+    impl ProgramInfo {
+        pub fn symbol_addr(&self, symbol_name: &str) -> Result<usize, Error> {
+            let offset = self.ruby_binary.symbol_value_mach("__mh_execute_header")?;
+            if let Ok(try_1) = self.ruby_binary.symbol_addr(symbol_name, offset) {
+                Ok(try_1)
+            } else if let Some(ref binary) = self.libruby_binary {
+                binary.symbol_addr(symbol_name, 0)
+            } else {
+                Err(format_err!("No libruby binary found, are you using system Ruby?"))
+            }
+        }
     }
 
     impl Binary {
@@ -65,10 +78,9 @@ mod os_impl {
             })
         }
 
-        pub fn symbol_addr(&self, symbol_name: &str) -> Result<usize, Error> {
-            let base_address = self.symbol_value_mach("__mh_execute_header")?;
+        pub fn symbol_addr(&self, symbol_name: &str, offset: usize) -> Result<usize, Error> {
             let addr = self.symbol_value_mach(symbol_name)?;
-            Ok(addr + self.start_addr - base_address)
+            Ok(addr + self.start_addr - offset)
         }
 
         // Gets the value of a symbol from the Mach-O binary
@@ -96,13 +108,20 @@ mod os_impl {
         }
     }
 
-    fn get_ruby_binary(pid: pid_t) -> Result<Binary, Error> {
-        let task = task_for_pid(pid).map_err(|_| AddressFinderError::MacPermissionDenied(pid))?;
-        let vmmap = get_process_maps(pid, task);
-        get_maps_address(&vmmap)
+    struct ProgramInfo {
+        ruby_binary: Binary,
+        libruby_binary: Option<Binary>,
     }
 
-    fn get_maps_address(maps: &Vec<MacMapRange>) -> Result<Binary, Error> {
+    fn get_program_info(pid: pid_t) -> Result<ProgramInfo, Error> {
+        let task = task_for_pid(pid).map_err(|_| AddressFinderError::MacPermissionDenied(pid))?;
+        let maps = get_process_maps(pid, task);
+        let ruby_binary = get_ruby_binary(&maps)?;
+        let libruby_binary = get_libruby_binary(&maps);
+        Ok(ProgramInfo{ruby_binary, libruby_binary})
+    }
+
+    fn get_ruby_binary(maps: &Vec<MacMapRange>) -> Result<Binary, Error> {
         let map: &MacMapRange = maps.iter()
             .find(|ref m| {
                 if let Some(ref pathname) = m.filename {
@@ -112,6 +131,21 @@ mod os_impl {
                 }
             }).ok_or(format_err!("Couldn't find ruby map"))?;
         Binary::from(map.start as usize, map.filename.as_ref().unwrap())
+    }
+
+    fn get_libruby_binary(maps: &Vec<MacMapRange>) -> Option<Binary> {
+        let maybe_map = maps.iter()
+            .find(|ref m| {
+                if let Some(ref pathname) = m.filename {
+                    pathname.contains("libruby") && m.is_exec()
+                } else {
+                    false
+                }
+            });
+        match maybe_map.as_ref() {
+            Some(map) => Some(Binary::from(map.start as usize, map.filename.as_ref().unwrap()).unwrap()),
+            None => None,
+        }
     }
 }
 
