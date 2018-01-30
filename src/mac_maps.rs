@@ -1,6 +1,7 @@
 use std;
 use std::io;
 use std::mem;
+use failure::Error;
 use libc::{c_int, pid_t};
 use mach::kern_return::KERN_SUCCESS;
 use mach::port::{mach_port_name_t, mach_port_t, MACH_PORT_NULL};
@@ -19,6 +20,39 @@ pub struct MacMapRange {
     pub start: mach_vm_address_t,
     pub count: mach_msg_type_number_t,
     pub filename: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub value: Option<usize>,
+    pub typ: String,
+    pub name: String,
+}
+
+fn parse_nm_output(output: &str) -> Vec<Symbol> {
+    let mut vec = vec!();
+    for line in output.split("\n") {
+        let mut split: Vec<&str> = line.split_whitespace().collect();
+        let sym = if split.len() == 2 {
+            Symbol{
+                value: None, typ: split[0].to_string(), name: split[1].to_string()
+            }
+        } else if split.len() == 3 {
+            let value = usize::from_str_radix(split[0], 16).unwrap();
+            Symbol{
+                value: Some(value), typ: split[1].to_string(), name: split[2].to_string()
+            }
+        } else {
+            panic!("uh oh");
+        };
+        vec.push(sym);
+    }
+    vec
+}
+
+pub fn get_symbols(filename: &str) -> Result<Vec<Symbol>, Error> {
+    let output = std::process::Command::new("nm").arg(filename).output()?;
+    Ok(parse_nm_output(output))
 }
 
 impl MacMapRange {

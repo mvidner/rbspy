@@ -22,14 +22,13 @@ pub enum AddressFinderError {
 #[cfg(target_os = "macos")]
 mod os_impl {
     use address_finder::AddressFinderError;
-    use goblin::mach;
     use failure::Error;
     use std;
     use std::io::Read;
     use libc::pid_t;
     use proc_maps::MapRange;
     use read_process_memory::*;
-    use mac_maps::{get_process_maps, task_for_pid, MacMapRange};
+    use mac_maps::*;
 
     pub fn get_ruby_version_address(pid: pid_t) -> Result<usize, Error> {
         let proginfo = &get_program_info(pid)?;
@@ -51,12 +50,12 @@ mod os_impl {
 
     struct Binary {
         pub start_addr: usize,
-        pub mach: Vec<u8>,
+        pub symbols: Vec<Symbol>,
     }
 
     impl ProgramInfo {
         pub fn symbol_addr(&self, symbol_name: &str) -> Result<usize, Error> {
-            let offset = self.ruby_binary.symbol_value_mach("__mh_execute_header")?;
+            let offset = self.ruby_binary.symbol_value_mach("__mh_execute_header").expect("Couldn't find __mh_execute_header symbol");
             if let Ok(try_1) = self.ruby_binary.symbol_addr(symbol_name, offset) {
                 Ok(try_1)
             } else if let Some(ref binary) = self.libruby_binary {
@@ -69,42 +68,24 @@ mod os_impl {
 
     impl Binary {
         pub fn from(start_addr: usize, filename: &str) -> Result<Binary, Error> {
-            let mut file = std::fs::File::open(&filename)?;
-            let mut contents: Vec<u8> = Vec::new();
-            file.read_to_end(&mut contents)?;
             Ok(Binary {
                 start_addr: start_addr,
-                mach: contents,
+                symbols: get_symbols(filename)?,
             })
         }
 
         pub fn symbol_addr(&self, symbol_name: &str, offset: usize) -> Result<usize, Error> {
-            let addr = self.symbol_value_mach(symbol_name)?;
+            let addr = self.symbol_value_mach(symbol_name).ok_or(format_err!("Couldn't find symbol"))?;
             Ok(addr + self.start_addr - offset)
         }
 
-        // Gets the value of a symbol from the Mach-O binary
-        // TODO: don't repeatedly parse the Mach-O binary every time
-        // haven't done this yet because of lifetime annoyances
-        pub fn symbol_value_mach(&self, symbol_name: &str) -> Result<usize, Error> {
-            let mach = match mach::Mach::parse(&self.mach) {
-                Ok(mach::Mach::Binary(m)) => m,
-                // TODO: smarter way of getting the right version from a fat binary
-                Ok(mach::Mach::Fat(m)) => m.get(0).unwrap(),
-                _ => {
-                    return Err(format_err!("Couldn't parse Mach-O binary"));
+        pub fn symbol_value_mach(&self, symbol_name: &str) -> Option<usize> {
+            for sym in self.symbols {
+                if sym.name == symbol_name && !sym.value.is_none() {
+                    return Some(sym.value.unwrap());
                 }
-            };
-            match mach.symbols.as_ref() {
-                Some(symbols) => for x in symbols.iter() {
-                    let (name, sym) = x.unwrap();
-                    if name == symbol_name {
-                        return Ok(sym.n_value as usize);
-                    }
-                },
-                None => {}
-            };
-            Err(format_err!("Couldn't get `{}` symbol. This is likely because rbspy doesn't work with system Ruby on Mac. Try with rbenv/rvm ruby?", symbol_name))
+            }
+            None
         }
     }
 
