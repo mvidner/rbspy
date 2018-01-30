@@ -149,42 +149,81 @@ pub fn get_ruby_version(pid: pid_t) -> Result<String, Error> {
     })
 }
 
-#[test]
-fn test_get_nonexistent_process() {
-    let version = get_ruby_version_retry(10000);
-    match version
-        .unwrap_err()
-        .root_cause()
-        .downcast_ref::<AddressFinderError>()
-        .unwrap()
-    {
-        &AddressFinderError::NoSuchProcess(10000) => {}
-        _ => assert!(false, "Expected NoSuchProcess error"),
+#[cfg(target_os = "linux")]
+mod tests {
+    #[test]
+    fn test_get_nonexistent_process() {
+        let version = get_ruby_version_retry(10000);
+        match version
+            .unwrap_err()
+            .root_cause()
+            .downcast_ref::<AddressFinderError>()
+            .unwrap()
+        {
+            &AddressFinderError::NoSuchProcess(10000) => {}
+            _ => assert!(false, "Expected NoSuchProcess error"),
+        }
+    }
+
+    #[test]
+    fn test_get_disallowed_process() {
+        let version = get_ruby_version_retry(1);
+        match version
+            .unwrap_err()
+            .root_cause()
+            .downcast_ref::<AddressFinderError>()
+            .unwrap()
+        {
+            &AddressFinderError::PermissionDenied(1) => {}
+            _ => assert!(false, "Expected NoSuchProcess error"),
+        }
+    }
+
+    #[test]
+    fn test_current_thread_address() {
+        let mut process = std::process::Command::new("/usr/bin/ruby").spawn().unwrap();
+        let pid = process.id() as pid_t;
+        let version = get_ruby_version_retry(pid).expect("version should exist");
+        let is_maybe_thread = is_maybe_thread_function(&version);
+        let result = address_finder::current_thread_address(pid, &version, is_maybe_thread);
+        assert!(result.is_ok(), format!("result not ok: {:?}", result));
+        process.kill().unwrap();
     }
 }
 
-#[test]
-fn test_get_disallowed_process() {
-    let version = get_ruby_version_retry(1);
-    match version
-        .unwrap_err()
-        .root_cause()
-        .downcast_ref::<AddressFinderError>()
-        .unwrap()
-    {
-        &AddressFinderError::PermissionDenied(1) => {}
-        _ => assert!(false, "Expected NoSuchProcess error"),
+
+#[cfg(target_os = "macos")]
+mod tests {
+    use initialize::get_ruby_version_retry;
+    use address_finder::*;
+
+    #[test]
+    fn test_get_nonexistent_process() {
+        let version = get_ruby_version_retry(10000);
+        match version
+            .unwrap_err()
+            .root_cause()
+            .downcast_ref::<AddressFinderError>()
+            .unwrap()
+        {
+            &AddressFinderError::MacPermissionDenied(_) => {}
+            _ => assert!(false, "Expected PermissionDenied error"),
+        }
     }
-}
-#[test]
-fn test_current_thread_address() {
-    let mut process = std::process::Command::new("/usr/bin/ruby").spawn().unwrap();
-    let pid = process.id() as pid_t;
-    let version = get_ruby_version_retry(pid).expect("version should exist");
-    let is_maybe_thread = is_maybe_thread_function(&version);
-    let result = address_finder::current_thread_address(pid, &version, is_maybe_thread);
-    assert!(result.is_ok(), format!("result not ok: {:?}", result));
-    process.kill().unwrap();
+
+    #[test]
+    fn test_get_disallowed_process() {
+        let version = get_ruby_version_retry(1);
+        match version
+            .unwrap_err()
+            .root_cause()
+            .downcast_ref::<AddressFinderError>()
+            .unwrap()
+        {
+            &AddressFinderError::MacPermissionDenied(_) => {}
+            _ => assert!(false, "Expected PermissionDenied error"),
+        }
+    }
 }
 
 fn is_maybe_thread_function<T: 'static>(

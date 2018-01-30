@@ -361,7 +361,7 @@ fn arg_parser() -> App<'static, 'static> {
                         .required(false),
                 )
                 .arg(
-                    Arg::from_usage("--no-drop-root 'Don't root privileges when running a Ruby program as a subprocess'")
+                    Arg::from_usage("--no-drop-root 'Don't drop root privileges when running a Ruby program as a subprocess'")
                         .required(false),
                 )
                 .arg(
@@ -412,8 +412,8 @@ impl Args {
                     Ok(integer_duration) => Some(std::time::Duration::from_secs(integer_duration)),
                 };
 
+                let no_drop_root = submatches.occurrences_of("no-drop-root") == 1;
 
-                let no_drop_root = matches.occurrences_of("drop-root") == 1;
                 let sample_rate = value_t!(submatches, "rate", u32).unwrap_or(100);
                 let target = if let Some(pid) = get_pid(submatches) {
                     Pid { pid }
@@ -499,6 +499,7 @@ mod tests {
                     sample_rate: 100,
                     maybe_duration: None,
                     format: OutputFormat::Flamegraph,
+                    no_drop_root: false,
                 },
             }
         );
@@ -515,6 +516,7 @@ mod tests {
                     sample_rate: 25,
                     maybe_duration: None,
                     format: OutputFormat::Flamegraph,
+                    no_drop_root: false,
                 },
             }
         );
