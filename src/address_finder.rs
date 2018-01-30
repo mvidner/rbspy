@@ -80,7 +80,7 @@ mod os_impl {
         }
 
         pub fn symbol_value_mach(&self, symbol_name: &str) -> Option<usize> {
-            for sym in self.symbols {
+            for sym in &self.symbols {
                 if sym.name == symbol_name && !sym.value.is_none() {
                     return Some(sym.value.unwrap());
                 }

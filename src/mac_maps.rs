@@ -43,7 +43,7 @@ fn parse_nm_output(output: &str) -> Vec<Symbol> {
                 value: Some(value), typ: split[1].to_string(), name: split[2].to_string()
             }
         } else {
-            panic!("uh oh");
+            continue;
         };
         vec.push(sym);
     }
@@ -52,7 +52,7 @@ fn parse_nm_output(output: &str) -> Vec<Symbol> {
 
 pub fn get_symbols(filename: &str) -> Result<Vec<Symbol>, Error> {
     let output = std::process::Command::new("nm").arg(filename).output()?;
-    Ok(parse_nm_output(output))
+    Ok(parse_nm_output(&String::from_utf8_lossy(&output.stdout)))
 }
 
 impl MacMapRange {
