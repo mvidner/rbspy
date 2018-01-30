@@ -33,8 +33,6 @@ extern crate lazy_static;
 extern crate ruby_bindings as bindings;
 #[cfg(test)]
 extern crate tempdir;
-#[macro_use]
-extern crate text_io;
 
 use chrono::prelude::*;
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
@@ -88,7 +86,7 @@ enum SubCmd {
         sample_rate: u32,
         maybe_duration: Option<std::time::Duration>,
         format: OutputFormat,
-        drop_root: bool,
+        no_drop_root: bool,
     },
     /// Capture and print a stacktrace snapshot of process `pid`.
     Snapshot { pid: pid_t },
@@ -115,14 +113,15 @@ fn do_main() -> Result<(), Error> {
             sample_rate,
             maybe_duration,
             format,
-            drop_root,
+            no_drop_root,
         } => {
             let (pid, spawned) = match target {
                 Pid { pid } => (pid, false),
                 Subprocess { prog, args } => {
-                    let pid = if drop_root {
+                    let pid = if nix::unistd::Uid::effective().is_root() && !no_drop_root {
                         let uid_str= std::env::var("SUDO_UID").context("Couldn't get UID to switch to when dropping root")?;
                         let uid: u32 = uid_str.parse::<u32>().context("Failed to parse UID")?;
+                        eprintln!("Dropping permissions: running Ruby command as user {}", std::env::var("SUDO_USER")?);
                         Command::new(prog).uid(uid).args(args).spawn()?.id() as pid_t
                     } else {
                         Command::new(prog).args(args).spawn()?.id() as pid_t
@@ -144,28 +143,13 @@ fn do_main() -> Result<(), Error> {
 }
 
 fn sudo_if_not_root() -> bool {
-    use std::io::Write;
-    // execs sudo -E $COMMAND if the command isn't running as root
-    let args: Vec<String> = std::env::args().collect();
     let euid = nix::unistd::Uid::effective();
     if euid.is_root() {
         return true;
     } else {
-        print!("Command must run as root. Rerun with sudo and --drop-root? (y/N)");
-        std::io::stdout().flush().ok().expect("Could not flush stdout");
-        let line: String = read!("{}\n");
-        if line != "y" {
-            return false;
-        }
-        let mut cmd = Command::new("sudo");
-        cmd.arg("-E")
-           .args(&args);
-        if (&args).contains(&"record".to_string()) {
-            cmd.arg("--drop-root");
-        }
-        cmd.exec();
-        println!("Failed to exec");
-        return false; // we'll never reach this line
+        println!("rbspy only works as root on Mac. Try rerunning with `sudo --preserve-env !!`.");
+        println!("If you run `sudo rbspy record ruby your-program.rb`, rbspy will drop privileges when running `ruby your-program.rb`. If you want the Ruby program to run as root, use `rbspy --no-drop-root`.");
+        return false;
     }
 }
 
@@ -377,7 +361,7 @@ fn arg_parser() -> App<'static, 'static> {
                         .required(false),
                 )
                 .arg(
-                    Arg::from_usage("--drop-root 'Drop root privileges when running a Ruby program to profile'")
+                    Arg::from_usage("--no-drop-root 'Don't root privileges when running a Ruby program as a subprocess'")
                         .required(false),
                 )
                 .arg(
@@ -429,7 +413,7 @@ impl Args {
                 };
 
 
-                let drop_root = matches.occurrences_of("drop-root") == 1;
+                let no_drop_root = matches.occurrences_of("drop-root") == 1;
                 let sample_rate = value_t!(submatches, "rate", u32).unwrap_or(100);
                 let target = if let Some(pid) = get_pid(submatches) {
                     Pid { pid }
@@ -449,7 +433,7 @@ impl Args {
                     sample_rate,
                     maybe_duration,
                     format,
-                    drop_root
+                    no_drop_root
                 }
             }
             _ => panic!("this shouldn't happen, please report the command you ran!"),
@@ -547,7 +531,7 @@ mod tests {
                     sample_rate: 100,
                     maybe_duration: Some(std::time::Duration::from_secs(60)),
                     format: OutputFormat::Flamegraph,
-                    drop_root: false,
+                    no_drop_root: false,
                 },
             }
         );
@@ -564,13 +548,13 @@ mod tests {
                     sample_rate: 100,
                     maybe_duration: Some(std::time::Duration::from_secs(60)),
                     format: OutputFormat::Callgrind,
-                    drop_root: false,
+                    no_drop_root: false,
                 },
             }
         );
 
         let args = Args::from(make_args(
-            "rbspy record --pid 1234 --file foo.txt --format callgrind --drop-root",
+            "rbspy record --pid 1234 --file foo.txt --format callgrind --no-drop-root",
         )).unwrap();
         assert_eq!(
             args,
@@ -581,7 +565,7 @@ mod tests {
                     sample_rate: 100,
                     maybe_duration: None,
                     format: OutputFormat::Callgrind,
-                    drop_root: true,
+                    no_drop_root: true,
                 },
             }
         );
